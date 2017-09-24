@@ -1,0 +1,514 @@
+---
+title: "Analysis of Rico's Guests data"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    md_extensions: -ascii_identifiers
+---
+###1.Introduction
+ホテル（宿泊施設）や観光施設においては、宿泊者や来訪者のデータの分析を行い、事業戦略上の意思決定に繋げようとする試みが以前に比べ活発化しています。宿泊者や来訪者の特性を主観的ではなく客観的に捉え直すことで意思決定の精度の向上も期待できます。
+宿泊者や来訪者の特性を把握するにあたり、彼（彼女）らの居住地に注目することで、当該施設がどの地域の人たちに比較的支持されているが明確になります。また、近年、ホテル（宿泊施設）や観光施設の宿泊者数や来訪者数の予測を行う施設も増えてきました。単にモデル構築するだけでなく、新しい情報が発生すれば、過去の知識を即座に修正し再びモデルを構築するような「学習機能」にも注目が集まっています。
+本稿では、和歌山市内に立地するゲストハウス[Guest House Rico](https://www.guesthouserico.com)の宿泊者情報を用いて、1.宿泊者の居住地の特性把握、2.宿泊者数の予測モデル構築を試みます。1.については、外国人宿泊者と日本人宿泊者に分けて、宿泊者情報といオープンデータを組み合わせることで宿泊者の特性を明らかにしていきます。2.については、月別・曜日別で傾向を把握した上で、実際に宿泊者数を予測するモデル構築を進めていきます。OLS(最小二乗法)によるモデル構築と階層ベイズによるモデル構築を行い、その精度の比較も行います。
+
+###2.地域別宿泊者数
+####(1)外国
+```{r include=FALSE,echo=FALSE}
+##使用するパッケージ
+library(tidyquant)
+library(lubridate)
+library(timekit)
+library(ggplot2)
+library(gridExtra)
+library(LearnBayes)
+library(bayesm)
+library(ggrepel)
+library(forecast)
+library(Nippon)
+library(raster)
+library(rgdal)
+library(ggplot2)
+library(ggiraph)
+library(ggthemes)
+
+```
+
+```{r message=FALSE, warning=FALSE, error=FALSE,fig.width=6, fig.height=5,fig.align='center'}
+setwd("~/Desktop/256/Rico Project")
+W_rico <- read.csv("world_rico.csv",fileEncoding="Shift_JIS",as.is = T)
+W_rico <- W_rico[1:19,]
+#library(plyr)
+#dfct <- join(df2,W_rico,"COUNTRY")
+#dfct$RICO[is.na(dfct$RICO)]<-0
+#dfct <- dfct[,-4]
+# Plot
+ggplot(W_rico, aes(reorder(x = 国名, X = RICO), y=RICO,color=エリア)) + 
+  geom_point(size=2.2) + 
+  geom_segment(aes(x=国名, 
+                   xend=国名, 
+                   y=0, 
+                   yend=RICO),size=1) + 
+  labs(title="国別宿泊者数(2016)") + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6))+
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(axis.title.y=element_blank())+
+  theme(axis.title.x=element_blank())+
+  theme(legend.position = "bottom") +
+  scale_color_tq()+
+  coord_flip()
+```
+
+```{r message=FALSE, warning=FALSE, error=FALSE,fig.width=5.5, fig.height=4.5,fig.align='center'}
+## log化
+W_rico$関空 <- log(W_rico$関空)
+
+ggplot(W_rico, aes(x =関空 , y = RICO,color=エリア)) +
+  geom_point() +
+  geom_smooth(colour = "blue",size = 0.6,method = "lm") +
+  geom_text_repel(data =W_rico ,
+                  family = "HiraKakuPro-W3",
+                  aes(label = 国名),
+                  size = 3,
+                  box.padding = unit(0.3, "lines"),
+                  point.padding = unit(0.3, "lines"))+
+  theme_bw(base_size=9) +
+  theme_bw(base_family="HiraKakuProN-W3")　+
+  theme(legend.position = "bottom") +
+  labs(title="宿泊者数 vs 入国者数(2016)") + 
+  labs(caption="source:総務省「出入国管理統計」") + 
+  labs(x = "関西国際空港入国者数(log)", y = "宿泊者数(RICO)")+
+  scale_color_tq()
+```
+
+####(2)日本
+```{r include=FALSE,echo=FALSE}
+## mapを追加
+Japan <- getData("GADM", country="Japan", level=1)
+Japand <- Japan@data
+colnames(Japand)[1] <- c("id")
+Japan1 <- fortify(Japan)
+Japan1 <- merge(Japan1,Japand,by="id")
+colnames(Japan1)[18] <- c("region")
+```
+
+```{r message=FALSE, warning=FALSE, error=FALSE,fig.width=8, fig.height=6,fig.align='right'}
+## 指定したwdからcsvを読み込み
+setwd("~/Desktop/256/Rico Project")
+data <- read.csv("area_sep.csv",header=T,fileEncoding="Shift_JIS",as.is = T)
+
+## tool tipを追加
+data$tooltip=paste0(data$region,"
+                    number of guests
+                    ",data$RICO)
+data$data_id=1:nrow(data)
+
+## 2016年 guests
+p<-ggplot(data=data,aes(map_id=region))+
+  expand_limits(x=Japan1$long,y=Japan1$lat)+
+  geom_map_interactive(map=Japan1,colour='gray',size=0.01,
+                       aes(fill=RICO,data_id=region,tooltip=tooltip))+
+  ggthemes::theme_map() +
+  coord_equal(0.9) +
+  theme(legend.justification=c(0.7,0), legend.position=c(0.7,0)) +
+  scale_fill_gradient(high = "blue4", low = "lightblue3") +
+  ggtitle("2016年 都道府県別宿泊者数") +
+  theme(plot.title = element_text(hjust = 0.3, vjust=4.12)) 
+
+ggiraph(code=print(p))
+```
+
+```{r message=FALSE, warning=FALSE, error=FALSE,fig.width=5, fig.height=4,fig.align='center'}
+## 指定したwdからcsvを読み込み
+setwd("~/Desktop/256/Rico Project")
+data2 <- read.csv("correl.csv",header=T,fileEncoding="Shift_JIS",as.is = T)
+
+## log化
+data2$入込者数 <- log(data2$入込者数)
+
+library(ggrepel)
+ggplot(data2, aes(x =入込者数 , y = RICO)) +
+  geom_point() +
+  geom_smooth(colour = "blue",size = 0.6,method = "lm") +
+  geom_text_repel(data =data2 ,
+                  family = "HiraKakuPro-W3",
+                  aes(label = 地域),
+                  size = 3,
+                  box.padding = unit(0.3, "lines"),
+                  point.padding = unit(0.3, "lines"))+
+  theme_bw(base_size=9) +
+  theme_bw(base_family="HiraKakuProN-W3")　+
+  labs(x = "和歌山市内宿泊者数(log)", y = "宿泊者数(RICO)")+
+  labs(caption="source:和歌山県観光客動態調査報告書(2016)") 
+```
+
+ 
+###3.月別でのトレンド
+今回は、月別の予測をARIMAモデルを用いて行った。
+```{r , include=FALSE, echo=FALSE}
+##月別データ全体を読み込み
+setwd("~/Desktop/256/Rico Project")
+y_m1617 <- read.csv("area_1.csv",fileEncoding="Shift_JIS",as.is = T)
+
+##対象別
+all <- subset(y_m1617,y_m1617$対象=="全体")
+all <- all[,3]
+all <- ts(all,  start=c(2016,1), frequency=12)
+
+Japan <- subset(y_m1617,y_m1617$対象=="日本人")
+Japan <- Japan[,3]
+Japan <- ts(Japan,  start=c(2016,1), frequency=12)
+
+Foreigner <- subset(y_m1617,y_m1617$対象=="外国人")
+Foreigner <- Foreigner[,3]
+Foreigner <- ts(Foreigner,  start=c(2016,1), frequency=12)
+
+Osaka <- subset(y_m1617,y_m1617$対象=="大阪府")
+Osaka <- Osaka[,3]
+Osaka <- ts(Osaka,  start=c(2016,1), frequency=12)
+
+Tokyo <- subset(y_m1617,y_m1617$対象=="東京都")
+Tokyo <- Tokyo[,3]
+Tokyo <- ts(Tokyo,  start=c(2016,1), frequency=12)
+
+Wakayama <- subset(y_m1617,y_m1617$対象=="和歌山県")
+Wakayama <- Wakayama[,3]
+Wakayama <- ts(Wakayama,  start=c(2016,1), frequency=12)
+
+Kyoto <- subset(y_m1617,y_m1617$対象=="京都府")
+Kyoto <- Kyoto[,3]
+Kyoto <- ts(Kyoto,  start=c(2016,1), frequency=12)
+
+Hyogo <- subset(y_m1617,y_m1617$対象=="兵庫県")
+Hyogo <- Hyogo[,3]
+Hyogo <- ts(Hyogo,  start=c(2016,1), frequency=12)
+
+library(forecast)
+d.arima <- auto.arima(all)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F1 <- autoplot(d.forecast)+
+      labs(title = "宿泊者数推移（全体）") +
+      ylab("宿泊者数") +
+      xlab("strat:2016-Jan.    →   end:2018-Jan") +
+      theme_bw(base_family="HiraKakuProN-W3") +
+      theme(legend.position="none")+
+      theme(axis.text.x=element_blank())
+
+##日本人
+d.arima <- auto.arima(Japan)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F2 <- autoplot(d.forecast)+
+      labs(title = "宿泊者数推移（日本人）") +
+      ylab("宿泊者数") +
+      xlab("strat:2016-Jan.    →   end:2018-Jan") +
+      theme_bw(base_family="HiraKakuProN-W3") +
+      theme(legend.position="none")+
+      theme(axis.text.x=element_blank())
+
+##外国人
+d.arima <- auto.arima(Foreigner)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F3 <- autoplot(d.forecast)+
+      labs(title = "宿泊者数推移（外国人）") +
+      ylab("宿泊者数") +
+      xlab("strat:2016-Jan.    →   end:2018-Jan") +
+      theme_bw(base_family="HiraKakuProN-W3") +
+      theme(legend.position="none")+
+      theme(axis.text.x=element_blank())
+
+##大阪府
+d.arima <- auto.arima(Osaka)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F4 <- autoplot(d.forecast)+
+  labs(title = "宿泊者数推移（大阪府）") +
+  ylab("宿泊者数") +
+  xlab("strat:2016-Jan.    →   end:2018-Jan") +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position="none")+
+  theme(axis.text.x=element_blank())
+
+##東京都
+d.arima <- auto.arima(Tokyo)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F5 <- autoplot(d.forecast)+
+  labs(title = "宿泊者数推移（東京都）") +
+  ylab("宿泊者数") +
+  xlab("strat:2016-Jan.    →   end:2018-Jan") +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position="none")+
+  theme(axis.text.x=element_blank())
+
+##和歌山県
+d.arima <- auto.arima(Wakayama)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F6 <- autoplot(d.forecast)+
+  labs(title = "宿泊者数推移（和歌山県）") +
+  ylab("宿泊者数") +
+  xlab("strat:2016-Jan.    →   end:2018-Jan") +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position="none")+
+  theme(axis.text.x=element_blank())
+
+##京都府
+d.arima <- auto.arima(Kyoto)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F7 <- autoplot(d.forecast)+
+  labs(title = "宿泊者数推移（京都府）") +
+  ylab("宿泊者数") +
+  xlab("strat:2016-Jan.    →   end:2018-Jan") +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position="none")+
+  theme(axis.text.x=element_blank())
+
+##兵庫県
+d.arima <- auto.arima(Hyogo)
+d.forecast <- forecast(d.arima, level = c(50), h = 5)
+F8 <- autoplot(d.forecast)+
+  labs(title = "宿泊者数推移（兵庫県）") +
+  ylab("宿泊者数") +
+  xlab("strat:2016-Jan.    →   end:2018-Jan") +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position="none")+
+  theme(axis.text.x=element_blank())
+
+```
+ 
+```{r }
+## まとめて1枚に出力
+## 2列に並べる
+grid.arrange(F1, F2, F3, F4, 
+             ncol = 2) 
+```
+
+```{r }
+grid.arrange(F5, F6, F7, F8, 
+             ncol = 2) 
+``` 
+
+```{r , include=FALSE, echo=FALSE}
+##データ
+load(url("https://firebasestorage.googleapis.com/v0/b/tourism-11e87.appspot.com/o/df_guest.RData?alt=media&token=4c609ed0-b13f-4675-a874-1f9f7d847a53"))
+
+df$date <- ymd(df$date)
+colnames(df) <- c("date","外国人宿泊者数","日本人宿泊者数","宿泊者数")
+class(df$date)
+##データに曜日情報を付加
+df_plus_week <- df %>%
+  tk_augment_timeseries_signature()
+```
+ 
+
+###4.曜日別のトレンド {.tabset}
+#### 全体
+
+```{r　message=FALSE, warning=FALSE, error=FALSE,echo=FALSE}
+##全体の傾向
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=宿泊者数,color=wday.lbl), size=1,alpha=0.5) +
+  labs(title = "宿泊者数全体") +
+  labs(colour = "Day of the week") +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position = "bottom") +
+  scale_color_tq()
+
+##全体の傾向（個別）
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=宿泊者数),color="navy", size=1,alpha=0.5) +
+  geom_smooth(data=df_plus_week, mapping = aes(x = date, y = 宿泊者数),colour = "darkred",size = 0.6) +
+  labs(title = "宿泊者全体の傾向（曜日別）") +
+  facet_wrap(~ wday.lbl, nrow = 3) +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(axis.title.x=element_blank())+
+  scale_color_tq()
+```
+ 
+#### 外国人宿泊者
+
+```{r　message=FALSE, warning=FALSE, error=FALSE,echo=FALSE}
+##外国人宿泊者の傾向（全体）
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=外国人宿泊者数,color=wday.lbl), size=1,alpha=0.5) +
+  labs(title = "外国人宿泊者数の傾向")+
+  labs(colour = "Day of the week") +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position = "bottom") +
+  scale_color_tq()
+
+##外国人宿泊者の傾向（個別）
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=外国人宿泊者数),color="navy", size=1,alpha=0.5) +
+  geom_smooth(data=df_plus_week, mapping = aes(x = date, y = 外国人宿泊者数),colour = "darkred",size = 0.6) +
+  labs(title = "外国人宿泊者の傾向（曜日別）") +
+  facet_wrap(~ wday.lbl, nrow = 3) +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(axis.title.x=element_blank())+
+  scale_color_tq()
+　
+```
+ 
+#### 日本人宿泊者
+
+```{r　message=FALSE, warning=FALSE, error=FALSE,echo=FALSE}
+##日本人宿泊者の傾向
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=日本人宿泊者数,color=wday.lbl), size=1,alpha=0.5) +
+  labs(title = "日本人宿泊者数全体") +
+  labs(colour = "Day of the week") +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position = "bottom") +
+  scale_color_tq()
+
+##日本人宿泊者の傾向（個別）
+ggplot() +
+  geom_point(data=df_plus_week, aes(x=date, y=日本人宿泊者数),color="navy", size=1,alpha=0.5) +
+  geom_smooth(data=df_plus_week, mapping = aes(x = date, y = 日本人宿泊者数),colour = "darkred",size = 0.6) +
+  labs(title = "日本人宿泊者の傾向（曜日別）") +
+  facet_wrap(~ wday.lbl, nrow = 3) +
+  labs(colour = "Day of the week") +
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(axis.title.x=element_blank())
+
+```
+
+###5.OLSによるモデル構築
+```{r fig.width=5, fig.height=4,fig.align='center'}
+##予測モデル(OLS)
+#上記で追加した拡張データを使ってモデリング
+base_data <- df_plus_week[,-2:-3]
+base_data$August <- ifelse(base_data$month=="8",1,0)
+base_data$July <- ifelse(base_data$month=="7",1,0)
+base_data$Feburary <- ifelse(base_data$month=="2",1,0)
+base_data$Saturday <- ifelse(base_data$wday.lbl=="Saturday",1,0)
+
+
+
+## 日本の休日
+hoiday16 <- as.data.frame(jholiday(2016))
+names(hoiday16)[1]<-"holyday"
+hoiday17 <- as.data.frame(jholiday(2017))
+names(hoiday17)[1]<-"holyday"
+holyday <- rbind(hoiday16,hoiday17)
+
+base_data$holyday <- ifelse(base_data$date %in% holyday$holyday ,1,0)
+
+
+
+# 重回帰モデルの構築
+fit.lm <- lm(宿泊者数~ +August+July+Feburary+Saturday+holyday, data=base_data)
+summary(fit.lm)
+
+# 作成したモデルでpredict
+# 実測値と適用値のプロット
+pred.lm <- predict(fit.lm,base_data[,c("August", "July","Feburary","Saturday","holyday")])
+
+ndata <- cbind(base_data[,c("宿泊者数","August", "July","Feburary","Saturday","holyday")],pred.lm)
+
+
+ggplot()+
+  geom_point(data=ndata,aes(x=宿泊者数, y=pred.lm), size=1,alpha=0.2) +
+  labs(title = "最小二乗法 (Ordinary Least Squares)") +
+  xlab("実測値") +ylab("予測値")+
+  geom_abline(slope = 1,size=0.6,color="darkred")+
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") +
+  theme(legend.position = "bottom") +
+  scale_color_tq()
+```
+
+###6.階層ベイズによるモデル構築
+```{r　 include=FALSE}
+ndata_1 <- ndata[1:500,]
+ndata_2 <- ndata[501:505,]
+
+# 階層ベイズモデルのインプットデータの作成
+regdata <- NULL
+for(i in 1:nrow(ndata_1)){
+  X <- as.matrix(cbind(1,ndata[i,2:7]))
+  y <- ndata_1$宿泊者数[i]
+  regdata[[i]] <- list(X=X,y=y)
+}
+Data <- list(regdata=regdata)
+
+# MCMCのパラメータ設定
+R <- 10000 # MCMCのイタレーション数
+Mcmc <- list(R=R)
+
+# MCMCによるパラメータ推定
+out <- rhierLinearModel(Data=Data,Mcmc=Mcmc)
+
+# betaのプロット
+# plot(out$betadraw)
+
+# 個々のbetaの平均値を抽出
+beta <- data.frame()
+for (i in 1:nrow(ndata_1)){
+  tmp <- rowMeans(out$betadraw[i,,seq(5000,7000)])
+  beta <- rbind(beta,tmp)
+}
+colnames(beta) <- c("I",colnames(ndata_1)[2:7])
+head(beta) # 個々のbeta
+
+# betaの平均
+apply(beta,2,mean)
+
+# 元データをモデルに適用
+pred.blm <- c()
+for(i in 1:nrow(ndata_1)){
+  pred.blm <- c(pred.blm,sum(beta[i,] * cbind(1,ndata_1[i,2:7])))
+}
+
+ndata_1 <- cbind(ndata_1,pred.blm)
+
+## 9月11日〜9月15日を予測
+pred.blm2 <- c()
+for(i in 1:nrow(ndata_2)){
+  pred.blm2 <- c(pred.blm2,sum(beta[i,] * cbind(1,ndata_2[i,2:7])))
+}
+pred.blm2
+ndata_2 <- cbind(ndata_2,pred.blm2)
+```
+
+```{r fig.width=5, fig.height=4,fig.align='center'}
+## 実測値と適用値のプロット
+ggplot()+
+  geom_point(data=ndata_1,aes(x=宿泊者数, y=pred.blm), size=1,alpha=0.2) +
+  labs(title = "階層ベイズによる予測") +
+  xlab("実測値") +ylab("予測値")+
+  geom_abline(slope = 1,size=0.6,color="darkred")+
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") 
+
+## 9月11日〜9月15日を予測
+ggplot()+
+  geom_point(data=ndata_2,aes(x=宿泊者数, y=pred.blm2), size=1,alpha=0.2) +
+  labs(title = "階層ベイズによる予測（9.11 to 9.15）") +
+  xlab("実測値") +ylab("予測値")+
+  geom_abline(slope = 1,size=0.6,color="darkred")+
+  theme_tq() +
+  theme_bw(base_family="HiraKakuProN-W3") 
+
+## 誤差が大きい場所
+ndata_1$res <- (ndata_1$宿泊者数-ndata_1$pred.blm)
+ndata_1 <- cbind(base_data[1:500,1],ndata_1)
+
+ggplot() +
+  geom_point(data=ndata_1, aes(x=`base_data[1:500, 1]`, 　y=res),color="navy", size=1,alpha=0.5) +
+  ylim(-2,25)+
+  xlab("Date") +ylab("予測値と実測値の乖離")+
+  theme_bw(base_family="HiraKakuProN-W3") 
+```
+
+```{r }
+library(DT)
+names(ndata_1)[1]<-c("date")
+ndata_1$pred.lm <- round(ndata_1$pred.lm,2)
+ndata_1$pred.blm <- round(ndata_1$pred.blm,2)
+ndata_1$res <- round(ndata_1$res,2)
+datatable(ndata_1)
+```
