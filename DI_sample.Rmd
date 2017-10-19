@@ -1,0 +1,206 @@
+---
+title: ""
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+    md_extensions: -ascii_identifiers
+---
+
+### 景況<br>
+#####<b> ・「売上額」「採算」「資金繰り」すべての指標で減少（低下・悪化）傾向</b><br>
+　今期の産業全体の景況は、売上額DIが△57.7、採算DIが△53.8、資金繰りDIが△40.0となり、「売上額」、「採算」、「資金繰り」いずれの指標も減少（低下、悪化）企業割合が増加（上昇、好転）企業割合を大きく上回っている。来期の産業全体の景況についても大きな変化は見られない見通しである。<br>
+　業種別では、建設業及び小売業の売上額DI、採算DIが△50.0の水準以上の状態にあり、「売上額」、「採算」は前年同期（H28/7〜9）と比べ悪化していることが確認できる。また、来期見通しについても大きな好転も期待し難い状況にある。サービス業は、前期（H29/4〜9）と比べれば、「売上額」は持ち直しの動きも見られる。
+
+```{r , include=FALSE, echo=FALSE,fig.align='center'}
+library(ggiraph)
+library(ggplot2)
+library(tidyr)
+
+DI <- read.csv("DI_data.csv",fileEncoding="Shift_JIS",as.is = T)
+DI$date <-seq.Date(as.Date("2000-10-01"),as.Date("2017-08-01"),by="1 month")
+head(DI)
+DI2 <- gather(DI, key="date")
+colnames(DI2) <- c("date","地域","景気DI")
+head(DI2)
+
+gg <- ggplot()+
+  geom_line(data=DI2,aes(x=date,y=景気DI),color="gray",size=0.3)+
+  geom_line(data=subset(DI2,地域=="全国"|地域=="東海"),
+            aes(x=date,y=景気DI,color=地域),size=0.3) +
+  scale_colour_manual(values = c(全国= "tomato",東海 = "darkgreen"))+
+  theme(plot.caption=element_text(hjust=0),
+        plot.subtitle=element_text(face="italic"),
+        legend.position="bottom")+
+  theme_bw(base_family="HiraKakuProN-W3")
+
+library(plotly)
+gg <- ggplotly(gg)
+gg  # Print the map
+```
+ 
+```{r }
+gg  # Print the map
+```
+
+<style>
+  #DataTables_Table_0 {
+     visibility: hidden;
+  }
+
+  #DataTables_Table_0_paginate {
+    visibility: hidden;
+  }
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DT)
+
+dt <-   datatable(DI, rownames=T, 
+            # filter = 'top',
+              callback=JS('$("a.buttons-collection").css("background","#b6c6c6");
+           $("a.buttons-collection").css("font-size","10px");
+           $("a.buttons-collection").css("border-radius", "6px");
+           $("a.buttons-collection").css("margin-right","0px");
+           return table;'),
+        extensions = 'Buttons',
+        options = list(searching=F,
+                       paging = T,
+                       bInfo = F,
+                       columnDefs = list(list(className = 'dt-left',  targets = 0),
+                                         list(className = 'dt-center',  targets = 1:11)),
+                       pageLength = 1,
+                       initComplete = JS("function(settings, json) {",
+                                         "$(this.api().table().header()).css({'background-color': 'white', 'color': 'white'});",
+                                         "}"),
+                       dom = 'Bfrtip',
+                       buttons = list(
+                                      list(extend = 'collection',
+                                           buttons = c('excel', 'csv'),
+                                           text = 'DOWNLOAD DATA')
+                       )
+        )
+  )
+
+```
+
+```{r  echo=FALSE, fig.align='right'}
+dt
+```
+ 
+### 地域別 景況天気予報
+```{r message=FALSE, warning=FALSE,fig.align='center'}
+library(leaflet)
+library(htmlTable)
+library(leaflet.extras)
+
+## データ作成
+df <- read.csv(textConnection(
+  "CityName,Lat,Long,製造業,卸売業,小売業,サービス業,天気,cl1,cl2
+  名古屋市,35.168673,136.910323,12.5,22.4,2.2,-22.1,day-sunny,red,white
+  あま市,35.200526,136.783584,12.5,22.4,2.2,-22.1,day-sunny,red,white
+  岡崎市,34.954845,137.173023,12.5,22.4,2.2,-22.1,cloud,gray,white
+  知立市,35.001279,137.0506463,12.5,22.4,2.2,-22.1,cloud,gray,white
+  東栄町,35.076930,137.697833,12.5,22.4,2.2,-22.1,rain,blue,white
+  豊根村,35.146451,137.719719,-,-,-,-,na,green,white
+  蒲郡市,34.826389,137.219660,12.5,22.4,2.2,-22.1,storm-showers,black,yellow"
+))
+
+##https://erikflowers.github.io/weather-icons/
+
+leaflet(df) %>%  addProviderTiles(providers$CartoDB.Positron) %>%
+  addWeatherMarkers(~Long, ~Lat, 
+                    icon = makeWeatherIcon(icon=df$天気,markerColor = df$cl1, iconColor = df$cl2 ),
+                    label = df$CityName ,
+                    popup = ~paste(" <figcaption text-align=left>■景況</figcaption>
+                                           <table border=1 table width=150 CELLSPACING=0 CELLPADDING=0 frame=hsides rules=groups>
+                                           <thead><tr align=center><th>業種</th><th>景気DI</th></tr></thead>
+                                           <tr align=center bgcolor=#f5f5f5><td>製造業</td><td>",df$製造業,"</td></tr>
+                                           <tr align=center ><td>卸売業</td><td>",df$卸売業,"</td></tr>
+                                           <tr align=center bgcolor=#f5f5f5><td>小売業</td><td>",df$小売業,"</td></tr>
+                                           <tr align=center ><td>サービス業</td><td>",df$サービス業,"</td></tr>
+                                           </table>"))
+```
+    
+     
+ 
+### 業種 {.tabset}
+#### 製造業
+比較してみましょう。
+```{r}
+##データ整形
+DI3 <- DI[,c("date","全国","東海")]
+DI3$up <- ifelse(DI3$全国>DI3$東海,DI3$全国,DI3$東海)
+DI3$down<-ifelse(DI3$全国<=DI3$東海,DI3$全国,DI3$東海)
+DI3$base <- ifelse(DI3$東海>=50,DI3$東海,50)
+ 
+##東海地方が50を超える場合
+ggplot(data=DI3,aes(x=date,y=東海,fill=東海))+
+  geom_line(size=0.3)+
+  geom_ribbon(color=NA,fill="#4575b4",alpha=0.5,aes(ymin=50,ymax=base))+
+  theme_minimal() +
+  geom_hline(yintercept=50,linetype=1,color="darkgray")+
+  scale_y_continuous(limits=c(0,65),breaks=seq(0,60,10))+
+  labs(x="",y="DI",
+       subtitle="Defusion index Tokai area",
+       caption="Cabine Office, Government of Japan")+
+  theme(plot.caption=element_text(hjust=0),
+        plot.subtitle=element_text(face="italic"),
+        legend.position="none")+
+  theme_bw(base_family="HiraKakuProN-W3")
+```
+ 
+#### 建設業
+how do you think?
+```{r}
+##データ整形
+DI3 <- DI[,c("date","全国","東海")]
+DI3$up <- ifelse(DI3$全国>DI3$東海,DI3$全国,DI3$東海)
+DI3$down<-ifelse(DI3$全国<=DI3$東海,DI3$全国,DI3$東海)
+DI3$base <- ifelse(DI3$東海>=50,DI3$東海,50)
+ 
+##東海地方が50を超える場合
+ggplot(data=DI3,aes(x=date,y=東海,fill=東海))+
+  geom_line(size=0.3)+
+  geom_ribbon(color=NA,fill="#4575b4",alpha=0.5,aes(ymin=50,ymax=base))+
+  theme_minimal() +
+  geom_hline(yintercept=50,linetype=1,color="darkgray")+
+  scale_y_continuous(limits=c(0,65),breaks=seq(0,60,10))+
+  labs(x="",y="DI",
+       subtitle="Defusion index Tokai area",
+       caption="Cabine Office, Government of Japan")+
+  theme(plot.caption=element_text(hjust=0),
+        plot.subtitle=element_text(face="italic"),
+        legend.position="none")+
+  theme_bw(base_family="HiraKakuProN-W3")
+```
+ 
+#### サービス業
+how do you think?
+```{r}
+##データ整形
+DI3 <- DI[,c("date","全国","東海")]
+DI3$up <- ifelse(DI3$全国>DI3$東海,DI3$全国,DI3$東海)
+DI3$down<-ifelse(DI3$全国<=DI3$東海,DI3$全国,DI3$東海)
+DI3$base <- ifelse(DI3$東海>=50,DI3$東海,50)
+ 
+##東海地方が50を超える場合
+ggplot(data=DI3,aes(x=date,y=東海,fill=東海))+
+  geom_line(size=0.3)+
+  geom_ribbon(color=NA,fill="#4575b4",alpha=0.5,aes(ymin=50,ymax=base))+
+  theme_minimal() +
+  geom_hline(yintercept=50,linetype=1,color="darkgray")+
+  scale_y_continuous(limits=c(0,65),breaks=seq(0,60,10))+
+  labs(x="",y="DI",
+       subtitle="Defusion index Tokai area",
+       caption="Cabine Office, Government of Japan")+
+  theme(plot.caption=element_text(hjust=0),
+        plot.subtitle=element_text(face="italic"),
+        legend.position="none")+
+  theme_bw(base_family="HiraKakuProN-W3")
+```
+
+### 設備投資の状況
+　来期（H29/10〜12）における見通しについては、「売上額」、「採算」、「資金繰り」のいずれの項目においても大幅な増加（上昇、好転）は期待し難く、現状程度の水準で推移し、投資が拡大〜。
